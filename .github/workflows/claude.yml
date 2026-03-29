@@ -13,38 +13,237 @@ on:
 jobs:
   claude:
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      github.actor == 'qnaiv' && (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
-      issues: read
+      issues: write # Required for Claude to manage issue labels
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
+      - name: Verify owner access
+        run: |
+          echo "Workflow triggered by: ${{ github.actor }}"
+          if [ "${{ github.actor }}" != "qnaiv" ]; then
+            echo "❌ Unauthorized access attempt by ${{ github.actor }}"
+            echo "Only the repository owner (qnaiv) can use Claude Code."
+            exit 1
+          fi
+          echo "✅ Access authorized for owner: ${{ github.actor }}"
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
+      - name: Setup GitHub CLI
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GitHub CLIがプリインストールされているかを確認
+          if ! command -v gh &> /dev/null; then
+            echo "📦 GitHub CLIをインストール中..."
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt update && sudo apt install gh -y
+            echo "✅ GitHub CLIのインストールが完了しました"
+          else
+            echo "✅ GitHub CLIは既にインストール済みです"
+            gh --version
+          fi
+          
+          # GitHub CLI認証確認
+          echo "🔐 GitHub CLI認証状況を確認中..."
+          if gh auth status; then
+            echo "✅ GitHub CLI認証成功"
+          else
+            echo "❌ GitHub CLI認証に問題があります"
+          fi
+
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@beta
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
             actions: read
-
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr:*)'
+          
+          # Optional: Specify model (defaults to Claude Sonnet 4, uncomment for Claude Opus 4)
+          # model: "claude-opus-4-20250514"
+          
+          # Optional: Customize the trigger phrase (default: @claude)
+          # trigger_phrase: "/claude"
+          
+          # Optional: Trigger when specific user is assigned to an issue
+          # assignee_trigger: "claude-bot"
+          
+          # Allow Claude to run lint and formatting commands (merged with main)
+          allowed_tools: |
+            Bash(npm install)
+            Bash(npm run build)
+            Bash(npm run dev)
+            Bash(npm run preview)
+            Bash(npm run fetch-schedule)
+            Bash(npm run lint)
+            Bash(npm run lint:fix)
+            Bash(npm run format)
+            Bash(npm run typecheck)
+            Bash(git *)
+            Bash(gh *)
+          
+          # Custom instructions for Claude to customize its behavior for your project
+          custom_instructions: |
+            必ず日本語で回答してください。
+            コミットメッセージやプルリクエストの内容はすべて日本語で記載してください。
+            GitHub flowに則って開発を行ってください。
+            コードの説明や提案も日本語で行ってください。
+            
+            ## 段階的開発プロセス
+            Issueでの@claudeメンションに対して、以下の段階的プロセスで対応してください：
+            
+            ### フェーズ判定方法
+            - Issueのラベルで現在のフェーズを判定
+            - ラベルがない場合は要件定義フェーズから開始
+            - 各フェーズ完了時に適切なラベルを設定
+            
+            ### 1. 要件定義フェーズ (ラベル: phase:requirements)
+            **目的**: Issue内容を正確に理解し、要件を明確化
+            **実行内容**:
+            - Issue内容の詳細分析
+            - 要件の整理と明確化
+            - 技術的制約・前提条件の確認
+            - 不明点・懸念点を具体的に質問
+            - スコープと優先度の確認
+            **出力形式**:
+            ```
+            ## 📋 要件定義フェーズ
+            
+            ### 理解した要件
+            - [要件1]
+            - [要件2]
+            
+            ### 確認したい点
+            1. [質問1]
+            2. [質問2]
+            
+            ### 技術的検討事項
+            - [検討点1]
+            - [検討点2]
+            
+            次回: 回答いただいた後、設計フェーズに進みます。
+            ```
+            **完了条件**: ユーザーから不明点への回答を得る
+            
+            ### 2. 設計フェーズ (ラベル: phase:design)
+            **目的**: 実装方針とアーキテクチャを設計
+            **実行内容**:
+            - アーキテクチャ設計
+            - ファイル構成・モジュール設計
+            - 技術選定の根拠説明
+            - 実装方針の詳細化
+            - データフロー・処理フローの設計
+            **出力形式**:
+            ```
+            ## 🏗️ 設計フェーズ
+            
+            ### アーキテクチャ設計
+            [設計概要]
+            
+            ### ファイル構成
+            - [ファイル1]: [役割]
+            - [ファイル2]: [役割]
+            
+            ### 実装方針
+            1. [方針1]
+            2. [方針2]
+            
+            ### 技術選定
+            - [技術]: [選定理由]
+            
+            ### 疑問点・要確認事項
+            [あれば質問]
+            ```
+            **完了条件**: 疑問点がなくなり設計が固まる
+            
+            ### 3. 設計確認フェーズ (ラベル: phase:design-review)
+            **目的**: 設計内容の最終確認と実装承認
+            **実行内容**:
+            - 設計内容の最終サマリー
+            - 実装予定の具体的提示
+            - 影響範囲の明確化
+            - ユーザー承認の明示的要求
+            **出力形式**:
+            ```
+            ## 🔍 設計確認フェーズ
+            
+            ### 最終設計サマリー
+            [設計の要約]
+            
+            ### 実装予定
+            1. [実装内容1]
+            2. [実装内容2]
+            
+            ### 影響範囲
+            - [影響1]
+            - [影響2]
+            
+            **実装開始の承認をお願いします**
+            承認いただけましたら、次回@claudeで実装を開始します。
+            ```
+            **完了条件**: ユーザーからの明示的な実装承認
+            
+            ### 4. 実装フェーズ (ラベル: phase:implementation)
+            **目的**: 設計に基づく実際のコード実装
+            **実行内容**:
+            - 設計に基づく実装
+            - コード品質チェック (lint, typecheck)
+            - 必要に応じてテスト作成
+            - PR作成
+            **品質チェック**:
+            - npm run lint でlintチェック必須
+            - lintエラーがある場合は npm run lint:fix で自動修正
+            - npm run typecheck でTypeScriptチェック
+            - 未使用のimportや変数は削除
+            **完了条件**: PR作成とissueクローズ
+            
+            ### ラベル管理
+            各フェーズ開始時に適切なラベルを設定してください：
+            - `phase:requirements` - 要件定義中
+            - `phase:design` - 設計中
+            - `phase:design-review` - 設計確認中
+            - `phase:implementation` - 実装中
+            - `phase:completed` - 完了
+            
+            ラベル設定にはGitHub CLIを使用（エラーハンドリング付き）：
+            ```bash
+            # 現在のラベルを削除して新しいフェーズラベルを設定
+            # エラーハンドリングを含む安全な実行
+            if ! gh issue edit [issue-number] --remove-label "phase:requirements,phase:design,phase:design-review,phase:implementation" --add-label "phase:design" 2>/dev/null; then
+              echo "⚠️ フェーズラベルの設定に失敗しましたが、処理を継続します"
+              echo "   手動でラベルを確認してください: https://github.com/qnaiv/splatoon3-schedule-notificator/issues/[issue-number]"
+            else
+              echo "✅ フェーズラベルを更新しました: phase:design"
+            fi
+            ```
+            
+            ### 重要な原則
+            - 各フェーズを飛ばさず順番に実行
+            - ユーザーの明示的な承認なしに次フェーズに進まない
+            - 疑問点は必ず確認してから進む
+            - 実装前には必ず設計確認フェーズを経る
+            - フェーズ変更時は必ずラベルを更新する
+          
+          # Optional: Custom environment variables for Claude
+          # claude_env: |
+          #   NODE_ENV: test
 
