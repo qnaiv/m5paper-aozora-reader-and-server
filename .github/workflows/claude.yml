@@ -21,8 +21,8 @@ jobs:
       )
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
+      contents: write
+      pull-requests: write
       issues: write # Required for Claude to manage issue labels
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
@@ -89,15 +89,9 @@ jobs:
           
           # Allow Claude to run lint and formatting commands (merged with main)
           allowed_tools: |
-            Bash(npm install)
-            Bash(npm run build)
-            Bash(npm run dev)
-            Bash(npm run preview)
-            Bash(npm run fetch-schedule)
-            Bash(npm run lint)
-            Bash(npm run lint:fix)
-            Bash(npm run format)
-            Bash(npm run typecheck)
+            Bash(python3 *)
+            Bash(pip3 *)
+            Bash(pip install *)
             Bash(git *)
             Bash(gh *)
           
@@ -210,10 +204,9 @@ jobs:
             - 必要に応じてテスト作成
             - PR作成
             **品質チェック**:
-            - npm run lint でlintチェック必須
-            - lintエラーがある場合は npm run lint:fix で自動修正
-            - npm run typecheck でTypeScriptチェック
-            - 未使用のimportや変数は削除
+            - Pythonスクリプトは python3 で実行確認を行う
+            - 依存ライブラリは requirements.txt に記載する
+            - MicroPythonコードはPC上で実行できないため、構文確認のみ行う
             **完了条件**: PR作成とissueクローズ
             
             ### ラベル管理
@@ -230,7 +223,7 @@ jobs:
             # エラーハンドリングを含む安全な実行
             if ! gh issue edit [issue-number] --remove-label "phase:requirements,phase:design,phase:design-review,phase:implementation" --add-label "phase:design" 2>/dev/null; then
               echo "⚠️ フェーズラベルの設定に失敗しましたが、処理を継続します"
-              echo "   手動でラベルを確認してください: https://github.com/qnaiv/splatoon3-schedule-notificator/issues/[issue-number]"
+              echo "   手動でラベルを確認してください: https://github.com/qnaiv/m5paper-aozora-reader-and-server/issues/[issue-number]"
             else
               echo "✅ フェーズラベルを更新しました: phase:design"
             fi
