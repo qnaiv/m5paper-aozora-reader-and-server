@@ -1,0 +1,2 @@
+# This file ensures the data directory is tracked by git
+# The data/todays_book.json output file will be created here
